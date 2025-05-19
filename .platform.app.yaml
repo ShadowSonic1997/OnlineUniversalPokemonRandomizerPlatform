@@ -4,148 +4,139 @@ type: python:3.9
 
 disk: 512
 
+dependencies:
+    python3:
+        flask: "*"
+
 hooks:
     build: |
-        # Create a more advanced fix for CheerpJ's IndexedDB issues
-        cat > cheerpj-fix.js << 'EOL'
-        // Comprehensive CheerpJ IndexedDB Fix
-        (function() {
-          console.log("CheerpJ Database Fix Loading");
-          
-          // Store the original methods
-          const originalOpen = indexedDB.open;
-          
-          // Replace the indexedDB.open method to handle all CheerpJ database requests
-          indexedDB.open = function(name, version) {
-            console.log(`IndexedDB open intercepted: ${name}, version: ${version}`);
-            
-            // Check if this is a CheerpJ database (they can have various prefixes)
-            if (name.includes('cjFS_') || name === 'cheerpjFS') {
-              console.log(`Creating CheerpJ database: ${name}`);
-              
-              // Create db with the name CheerpJ is requesting
-              const request = originalOpen.call(indexedDB, name, 1);
-              
-              // Set up the schema correctly
-              request.onupgradeneeded = function(event) {
-                console.log(`Setting up schema for ${name}`);
-                const db = event.target.result;
-                
-                // Create stores with all possible names CheerpJ might use
-                const possibleStores = [
-                  'files', 'metadata', 
-                  'FILE_DATA', 'FILE_METADATA'
-                ];
-                
-                for (const storeName of possibleStores) {
-                  if (!db.objectStoreNames.contains(storeName)) {
-                    console.log(`Creating store: ${storeName}`);
-                    db.createObjectStore(storeName, { keyPath: 'path' });
-                  }
-                }
-              };
-              
-              // Make transaction errors fail silently
-              const originalSuccess = request.onsuccess;
-              request.onsuccess = function(event) {
-                const db = event.target.result;
-                console.log(`Database ${name} opened successfully`);
-                
-                // Save the original transaction method
-                const originalTransaction = db.transaction;
-                
-                // Replace with our version that handles errors
-                db.transaction = function(storeNames, mode) {
-                  console.log(`Transaction requested for stores: ${storeNames}`);
-                  
-                  try {
-                    // First try the original method
-                    return originalTransaction.call(db, storeNames, mode);
-                  } catch (e) {
-                    console.warn(`Transaction error for ${storeNames}: ${e.message}`);
+        # Create a simple Flask server to serve the files
+        cat > server.py << 'EOL'
+        from flask import Flask, send_from_directory, Response, request, render_template_string
+        import os
+
+        app = Flask(__name__)
+
+        # Add security headers
+        @app.after_request
+        def add_security_headers(response):
+            response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+            response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+            return response
+
+        # Serve static files with optional modifications
+        @app.route('/<path:path>')
+        def serve_file(path):
+            if os.path.exists(path):
+                return send_from_directory('.', path)
+            return 'File not found', 404
+
+        # Inject our fixes into the index.html
+        @app.route('/')
+        def serve_index():
+            try:
+                with open('index.html', 'r') as f:
+                    content = f.read()
                     
-                    // Create a mock transaction that won't crash
-                    return {
-                      objectStore: function(name) {
-                        console.log(`Providing mock store: ${name}`);
-                        return {
-                          put: function(item) { 
-                            console.log(`Mock put: ${item && item.path}`);
-                            const mockRequest = {};
-                            setTimeout(() => {
-                              if (mockRequest.onsuccess) mockRequest.onsuccess();
-                            }, 0);
-                            return mockRequest;
-                          },
-                          get: function(key) { 
-                            console.log(`Mock get: ${key}`);
-                            const mockRequest = {};
-                            setTimeout(() => {
-                              if (mockRequest.onsuccess) mockRequest.onsuccess();
-                            }, 0);
-                            return mockRequest;
-                          }
-                        };
-                      }
-                    };
-                  }
-                };
+                # Inject our fix directly into the HTML
+                fix_script = """
+                <script>
+                // Fix for CheerpJ IndexedDB issues
+                (function() {
+                    console.log("CheerpJ Fix Loading");
+                    
+                    // Wait for page to load before initializing CheerpJ fix
+                    window.addEventListener('load', function() {
+                        // Try to initialize the IndexedDB with the required schema
+                        function initDB() {
+                            try {
+                                console.log("Initializing IndexedDB for CheerpJ");
+                                var dbName = 'cheerpjFS';
+                                
+                                // First delete the database to start fresh
+                                var delReq = indexedDB.deleteDatabase(dbName);
+                                delReq.onsuccess = function() {
+                                    // Open a fresh database
+                                    var req = indexedDB.open(dbName, 1);
+                                    
+                                    req.onupgradeneeded = function(event) {
+                                        var db = event.target.result;
+                                        console.log("Creating required stores");
+                                        
+                                        // Create all possible stores CheerpJ might need
+                                        if (!db.objectStoreNames.contains('files')) {
+                                            db.createObjectStore('files', { keyPath: 'path' });
+                                        }
+                                        if (!db.objectStoreNames.contains('metadata')) {
+                                            db.createObjectStore('metadata', { keyPath: 'path' });
+                                        }
+                                        if (!db.objectStoreNames.contains('FILE_DATA')) {
+                                            db.createObjectStore('FILE_DATA', { keyPath: 'path' });
+                                        }
+                                        if (!db.objectStoreNames.contains('FILE_METADATA')) {
+                                            db.createObjectStore('FILE_METADATA', { keyPath: 'path' });
+                                        }
+                                    };
+                                    
+                                    req.onsuccess = function() {
+                                        console.log("Database initialized successfully");
+                                    };
+                                    
+                                    req.onerror = function(event) {
+                                        console.error("Error opening database:", event);
+                                    };
+                                };
+                            } catch (e) {
+                                console.error("Error initializing database:", e);
+                            }
+                        }
+                        
+                        // Initialize the database right away
+                        initDB();
+                        
+                        // Also handle the cjFS_/files/ database
+                        try {
+                            var filesDbName = 'cjFS_/files/';
+                            var delFilesReq = indexedDB.deleteDatabase(filesDbName);
+                            delFilesReq.onsuccess = function() {
+                                var filesReq = indexedDB.open(filesDbName, 1);
+                                filesReq.onupgradeneeded = function(event) {
+                                    var db = event.target.result;
+                                    if (!db.objectStoreNames.contains('files')) {
+                                        db.createObjectStore('files', { keyPath: 'path' });
+                                    }
+                                    if (!db.objectStoreNames.contains('metadata')) {
+                                        db.createObjectStore('metadata', { keyPath: 'path' });
+                                    }
+                                };
+                            };
+                        } catch (e) {
+                            console.error("Error with files database:", e);
+                        }
+                    });
+                })();
+                </script>
+                """
+                    
+                # Insert our fix script right after the opening head tag
+                content = content.replace('<head>', '<head>' + fix_script)
                 
-                // Call the original success handler
-                if (originalSuccess) {
-                  originalSuccess.apply(this, arguments);
-                }
-              };
-              
-              return request;
-            }
-            
-            // For non-CheerpJ databases, use the original method
-            return originalOpen.apply(this, arguments);
-          };
-          
-          // Define a function to delete all CheerpJ databases
-          function deleteAllCheerpJDatabases() {
-            indexedDB.databases().then(function(dbs) {
-              dbs.forEach(function(db) {
-                if (db.name.includes('cjFS_') || db.name === 'cheerpjFS') {
-                  console.log(`Deleting database: ${db.name}`);
-                  indexedDB.deleteDatabase(db.name);
-                }
-              });
-            }).catch(function(err) {
-              console.warn("Could not list databases:", err);
-              
-              // Try deleting known names anyway
-              console.log("Deleting known database names");
-              indexedDB.deleteDatabase('cheerpjFS');
-              indexedDB.deleteDatabase('cjFS_/files/');
-            });
-          }
-          
-          // Try to delete existing databases on page load
-          window.addEventListener('load', deleteAllCheerpJDatabases);
-          
-          // Also try deleting right away
-          deleteAllCheerpJDatabases();
-          
-          console.log("CheerpJ Database Fix Ready");
-        })();
+                return Response(content, mimetype='text/html')
+            except Exception as e:
+                return f"Error serving index.html: {str(e)}"
+
+        if __name__ == '__main__':
+            app.run(host='0.0.0.0', port=8080)
         EOL
-        
-        # Insert our fix script in the index.html
-        # First make a backup
-        cp index.html index.html.bak
-        
-        # Add our script as early as possible in the head
-        sed -i '/<head>/a <script src="cheerpj-fix.js"></script>' index.html
 
 web:
+    upstream:
+        socket_family: tcp
+        protocol: http
+    commands:
+        start: python server.py
     locations:
         "/":
-            root: ""
-            index:
-                - index.html
-            expires: 1h
+            passthru: true
             scripts: false
             allow: true
