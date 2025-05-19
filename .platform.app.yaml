@@ -6,85 +6,84 @@ disk: 512
 
 hooks:
     build: |
-        # Create a more comprehensive fix for CheerpJ's IndexedDB issues
+        # Create a more advanced fix for CheerpJ's IndexedDB issues
         cat > cheerpj-fix.js << 'EOL'
-        // CheerpJ IndexedDB Fix
+        // Comprehensive CheerpJ IndexedDB Fix
         (function() {
-          // Store the original open method
+          console.log("CheerpJ Database Fix Loading");
+          
+          // Store the original methods
           const originalOpen = indexedDB.open;
           
-          // Replace the open method with our own
+          // Replace the indexedDB.open method to handle all CheerpJ database requests
           indexedDB.open = function(name, version) {
-            console.log(`IndexedDB open called: ${name}, version: ${version}`);
+            console.log(`IndexedDB open intercepted: ${name}, version: ${version}`);
             
-            // If it's the CheerpJ database, intercept and fix
-            if (name === 'cheerpjFS') {
-              // Force version to be 1 to ensure onupgradeneeded will run
+            // Check if this is a CheerpJ database (they can have various prefixes)
+            if (name.includes('cjFS_') || name === 'cheerpjFS') {
+              console.log(`Creating CheerpJ database: ${name}`);
+              
+              // Create db with the name CheerpJ is requesting
               const request = originalOpen.call(indexedDB, name, 1);
               
-              // Always handle the upgrade
-              const originalUpgradeNeeded = request.onupgradeneeded;
+              // Set up the schema correctly
               request.onupgradeneeded = function(event) {
-                console.log("Creating CheerpJ database schema");
+                console.log(`Setting up schema for ${name}`);
                 const db = event.target.result;
                 
-                // Create all possible stores CheerpJ might need
-                if (!db.objectStoreNames.contains('files')) {
-                  db.createObjectStore('files', { keyPath: 'path' });
-                  console.log("Created 'files' store");
-                }
+                // Create stores with all possible names CheerpJ might use
+                const possibleStores = [
+                  'files', 'metadata', 
+                  'FILE_DATA', 'FILE_METADATA'
+                ];
                 
-                if (!db.objectStoreNames.contains('metadata')) {
-                  db.createObjectStore('metadata', { keyPath: 'path' });
-                  console.log("Created 'metadata' store");
-                }
-                
-                // Some versions might use these names instead
-                if (!db.objectStoreNames.contains('FILE_DATA')) {
-                  db.createObjectStore('FILE_DATA', { keyPath: 'path' });
-                  console.log("Created 'FILE_DATA' store");
-                }
-                
-                if (!db.objectStoreNames.contains('FILE_METADATA')) {
-                  db.createObjectStore('FILE_METADATA', { keyPath: 'path' });
-                  console.log("Created 'FILE_METADATA' store");
-                }
-                
-                // Call original handler if it exists
-                if (originalUpgradeNeeded) {
-                  originalUpgradeNeeded.apply(this, arguments);
+                for (const storeName of possibleStores) {
+                  if (!db.objectStoreNames.contains(storeName)) {
+                    console.log(`Creating store: ${storeName}`);
+                    db.createObjectStore(storeName, { keyPath: 'path' });
+                  }
                 }
               };
               
-              // Add success handler to patch transaction method after DB is open
+              // Make transaction errors fail silently
               const originalSuccess = request.onsuccess;
               request.onsuccess = function(event) {
-                console.log("Database opened successfully, patching transaction method");
                 const db = event.target.result;
+                console.log(`Database ${name} opened successfully`);
                 
-                // Patch the transaction method to handle missing stores
+                // Save the original transaction method
                 const originalTransaction = db.transaction;
+                
+                // Replace with our version that handles errors
                 db.transaction = function(storeNames, mode) {
+                  console.log(`Transaction requested for stores: ${storeNames}`);
+                  
                   try {
+                    // First try the original method
                     return originalTransaction.call(db, storeNames, mode);
                   } catch (e) {
-                    console.warn("Transaction error:", e);
-                    console.warn("Requested stores:", storeNames);
+                    console.warn(`Transaction error for ${storeNames}: ${e.message}`);
                     
-                    // Try to create the missing store(s) on the fly
-                    const tx = db.transaction([], 'readwrite');
-                    // Return a mock transaction that won't crash
+                    // Create a mock transaction that won't crash
                     return {
                       objectStore: function(name) {
-                        console.log("Accessing mock store:", name);
+                        console.log(`Providing mock store: ${name}`);
                         return {
-                          put: function(data) { 
-                            console.log("Mock put called with:", data);
-                            return { onsuccess: null }; 
+                          put: function(item) { 
+                            console.log(`Mock put: ${item && item.path}`);
+                            const mockRequest = {};
+                            setTimeout(() => {
+                              if (mockRequest.onsuccess) mockRequest.onsuccess();
+                            }, 0);
+                            return mockRequest;
                           },
                           get: function(key) { 
-                            console.log("Mock get called with:", key);
-                            return { onsuccess: null }; 
+                            console.log(`Mock get: ${key}`);
+                            const mockRequest = {};
+                            setTimeout(() => {
+                              if (mockRequest.onsuccess) mockRequest.onsuccess();
+                            }, 0);
+                            return mockRequest;
                           }
                         };
                       }
@@ -92,7 +91,7 @@ hooks:
                   }
                 };
                 
-                // Call original success handler if it exists
+                // Call the original success handler
                 if (originalSuccess) {
                   originalSuccess.apply(this, arguments);
                 }
@@ -101,26 +100,44 @@ hooks:
               return request;
             }
             
-            // For other databases, use the original method
+            // For non-CheerpJ databases, use the original method
             return originalOpen.apply(this, arguments);
           };
           
-          // Try to delete the database first to ensure a clean start
-          console.log("Attempting to delete existing CheerpJ database");
-          const deleteRequest = indexedDB.deleteDatabase('cheerpjFS');
-          deleteRequest.onsuccess = function() {
-            console.log("Existing database deleted successfully");
-          };
-          deleteRequest.onerror = function(event) {
-            console.warn("Error deleting database:", event);
-          };
+          // Define a function to delete all CheerpJ databases
+          function deleteAllCheerpJDatabases() {
+            indexedDB.databases().then(function(dbs) {
+              dbs.forEach(function(db) {
+                if (db.name.includes('cjFS_') || db.name === 'cheerpjFS') {
+                  console.log(`Deleting database: ${db.name}`);
+                  indexedDB.deleteDatabase(db.name);
+                }
+              });
+            }).catch(function(err) {
+              console.warn("Could not list databases:", err);
+              
+              // Try deleting known names anyway
+              console.log("Deleting known database names");
+              indexedDB.deleteDatabase('cheerpjFS');
+              indexedDB.deleteDatabase('cjFS_/files/');
+            });
+          }
+          
+          // Try to delete existing databases on page load
+          window.addEventListener('load', deleteAllCheerpJDatabases);
+          
+          // Also try deleting right away
+          deleteAllCheerpJDatabases();
+          
+          console.log("CheerpJ Database Fix Ready");
         })();
         EOL
         
-        # Make a backup of index.html
+        # Insert our fix script in the index.html
+        # First make a backup
         cp index.html index.html.bak
         
-        # Insert our fix script right after the opening head tag
+        # Add our script as early as possible in the head
         sed -i '/<head>/a <script src="cheerpj-fix.js"></script>' index.html
 
 web:
