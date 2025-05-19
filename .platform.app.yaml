@@ -4,107 +4,72 @@ type: python:3.9
 
 disk: 512
 
-dependencies:
-    python3:
-        flask: "*"
+# No custom server, use Platform.sh's built-in web server
 
 hooks:
     build: |
-        # Create a Flask server with proper CORS settings
-        cat > server.py << 'EOL'
-        from flask import Flask, send_from_directory, Response
-        import os
-
-        app = Flask(__name__)
-
-        # Add security headers
-        @app.after_request
-        def add_security_headers(response):
-            # Required for SharedArrayBuffer and proper isolation
-            response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
-            response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+        # Prepare the files with the fixes we need
+        # Create a basic HTML page to test
+        cat > index.html << 'EOL'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Pokemon Randomizer</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                h1 { color: #333; }
+                .container { max-width: 800px; margin: 0 auto; }
+                button { padding: 10px 20px; margin: 10px 0; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Pokemon Randomizer</h1>
+                <p>Welcome to the Online Pokemon Randomizer.</p>
+                <p>This application is currently being set up. Please check back later.</p>
+                <button id="testDatabase">Test IndexedDB</button>
+                <div id="dbStatus"></div>
+            </div>
             
-            # Basic CORS headers
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-            
-            return response
-
-        # Handle OPTIONS requests
-        @app.route('/', methods=['OPTIONS'])
-        @app.route('/<path:path>', methods=['OPTIONS'])
-        def options_handler(path=None):
-            response = Response()
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-            return response
-
-        # Serve static files
-        @app.route('/<path:path>')
-        def serve_file(path):
-            if os.path.exists(path):
-                return send_from_directory('.', path)
-            return 'File not found', 404
-
-        # Serve index.html
-        @app.route('/')
-        def serve_index():
-            try:
-                with open('index.html', 'r') as f:
-                    content = f.read()
+            <script>
+                // Test the IndexedDB functionality
+                document.getElementById('testDatabase').addEventListener('click', function() {
+                    const status = document.getElementById('dbStatus');
+                    status.textContent = 'Testing IndexedDB...';
                     
-                # Add our IndexedDB fix script
-                fix_script = """
-                <script>
-                // Wait for the page to load
-                window.addEventListener('load', function() {
                     try {
-                        console.log("Initializing CheerpJ database fix");
+                        // Open a test database
+                        const request = indexedDB.open('testDB', 1);
                         
-                        // First create/open the cheerpjFS database
-                        var req = indexedDB.open('cheerpjFS', 1);
-                        req.onupgradeneeded = function(event) {
-                            var db = event.target.result;
-                            console.log("Creating stores in cheerpjFS");
+                        request.onupgradeneeded = function(event) {
+                            const db = event.target.result;
+                            status.textContent += '\nCreating test store...';
                             
-                            // Create all possible store names
-                            if (!db.objectStoreNames.contains('files')) {
-                                db.createObjectStore('files', { keyPath: 'path' });
-                            }
-                            if (!db.objectStoreNames.contains('metadata')) {
-                                db.createObjectStore('metadata', { keyPath: 'path' });
+                            // Create a test store
+                            if (!db.objectStoreNames.contains('testStore')) {
+                                db.createObjectStore('testStore', { keyPath: 'id' });
                             }
                         };
                         
-                        // Then also create the cjFS_/files/ database
-                        var req2 = indexedDB.open('cjFS_/files/', 1);
-                        req2.onupgradeneeded = function(event) {
-                            var db = event.target.result;
-                            console.log("Creating stores in cjFS_/files/");
+                        request.onsuccess = function(event) {
+                            status.textContent += '\nDatabase opened successfully!';
                             
-                            if (!db.objectStoreNames.contains('files')) {
-                                db.createObjectStore('files', { keyPath: 'path' });
-                            }
-                            if (!db.objectStoreNames.contains('metadata')) {
-                                db.createObjectStore('metadata', { keyPath: 'path' });
-                            }
+                            // Try adding some data
+                            const db = event.target.result;
+                            const tx = db.transaction('testStore', 'readwrite');
+                            const store = tx.objectStore('testStore');
+                            
+                            store.put({ id: 1, name: 'Test Item' });
+                            
+                            tx.oncomplete = function() {
+                                status.textContent += '\nData stored successfully. IndexedDB is working!';
+                            };
+                            
+                            tx.onerror = function(e) {
+                                status.textContent += '\nError storing data: ' + e.target.error;
+                            };
                         };
-                    } catch (e) {
-                        console.error("Error setting up databases:", e);
-                    }
-                });
-                </script>
-                """
-                
-                # Insert our fix script right before the closing head tag
-                if '</head>' in content:
-                    content = content.replace('</head>', fix_script + '</head>')
-                else:
-                    # If there's no head tag, add it at the beginning of the body
-                    content = content.replace('<body>', '<body>' + fix_script)
-                
-                return Response(content, mimetype='text/html')
-            except Exception as e:
-                return f"Error serving index.html: {str
+                        
+                        request.onerror = function(event) {
+                            status.textContent +=
