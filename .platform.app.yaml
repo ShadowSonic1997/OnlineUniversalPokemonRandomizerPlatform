@@ -9,6 +9,10 @@ hooks:
         mkdir -p OnlineUniversalPokemonRandomizerPlatform
         cp randomizer.jar OnlineUniversalPokemonRandomizerPlatform/
         cp randomizer.jar.js OnlineUniversalPokemonRandomizerPlatform/
+        # Make sure settings directory is also copied if it exists
+        if [ -d "settings" ]; then
+            cp -r settings OnlineUniversalPokemonRandomizerPlatform/
+        fi
 
 web:
     locations:
@@ -21,6 +25,8 @@ web:
             allow: true
             passthru: false
             headers:
-                # Removed security headers that were causing iframe issues
+                # Enable cross-origin requests
                 Access-Control-Allow-Origin: "*"
                 Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+                # Add storage permission policy
+                Permissions-Policy: "interest-cohort=(), accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
