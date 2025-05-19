@@ -4,16 +4,12 @@ type: python:3.9
 
 disk: 512
 
-hooks:
-    build: |
-        pip install flask
-        apt-get update -y
-        apt-get install -y default-jre
-
 web:
-    commands:
-        start: python run_randomizer.py
     locations:
         "/":
-            passthru: true
+            root: "."
+            index:
+                - index.html
+            expires: 1h
             scripts: false
+            allow: true
