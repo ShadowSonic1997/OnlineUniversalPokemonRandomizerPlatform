@@ -4,6 +4,12 @@ type: nodejs:18
 
 disk: 512
 
+hooks:
+    build: |
+        mkdir -p OnlineUniversalPokemonRandomizerPlatform
+        cp randomizer.jar OnlineUniversalPokemonRandomizerPlatform/
+        cp randomizer.jar.js OnlineUniversalPokemonRandomizerPlatform/
+
 web:
     locations:
         "/":
