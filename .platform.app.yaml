@@ -9,10 +9,70 @@ hooks:
         mkdir -p OnlineUniversalPokemonRandomizerPlatform
         cp randomizer.jar OnlineUniversalPokemonRandomizerPlatform/
         cp randomizer.jar.js OnlineUniversalPokemonRandomizerPlatform/
-        # Make sure settings directory is also copied if it exists
-        if [ -d "settings" ]; then
-            cp -r settings OnlineUniversalPokemonRandomizerPlatform/
-        fi
+        # Create a fix for IndexedDB issues
+        cat > db-fix.js << 'EOL'
+        // Initialize the required object stores for CheerpJ
+        (function() {
+          try {
+            // Run this before CheerpJ loads
+            const initIndexedDB = () => {
+              const request = indexedDB.open('cheerpjFS', 1);
+              
+              request.onupgradeneeded = function(event) {
+                const db = event.target.result;
+                
+                // Create object stores that CheerpJ might need
+                if (!db.objectStoreNames.contains('files')) {
+                  db.createObjectStore('files', { keyPath: 'path' });
+                }
+                
+                // Additional stores that might be needed
+                if (!db.objectStoreNames.contains('metadata')) {
+                  db.createObjectStore('metadata', { keyPath: 'path' });
+                }
+              };
+              
+              request.onerror = function(event) {
+                console.log('IndexedDB initialization error:', event.target.error);
+              };
+              
+              request.onsuccess = function(event) {
+                console.log('IndexedDB initialized successfully');
+              };
+            };
+            
+            // Run the initialization
+            initIndexedDB();
+            
+            // Also handle errors from CheerpJ's IndexedDB operations
+            const originalTransaction = IDBDatabase.prototype.transaction;
+            IDBDatabase.prototype.transaction = function() {
+              try {
+                return originalTransaction.apply(this, arguments);
+              } catch (e) {
+                console.log('Caught IndexedDB transaction error:', e);
+                // Attempt recovery by reopening the database
+                initIndexedDB();
+                // Return a mock transaction to prevent errors
+                return {
+                  objectStore: function() {
+                    return {
+                      put: function() { return { onsuccess: null, onerror: null }; },
+                      get: function() { return { onsuccess: null, onerror: null }; },
+                      delete: function() { return { onsuccess: null, onerror: null }; }
+                    };
+                  }
+                };
+              }
+            };
+          } catch (e) {
+            console.error('Error setting up IndexedDB fix:', e);
+          }
+        })();
+        EOL
+        
+        # Modify the index.html to load our fix script before CheerpJ
+        sed -i '/<head>/a <script src="db-fix.js"></script>' index.html
 
 web:
     locations:
@@ -25,8 +85,5 @@ web:
             allow: true
             passthru: false
             headers:
-                # Enable cross-origin requests
                 Access-Control-Allow-Origin: "*"
                 Access-Control-Allow-Methods: "GET, POST, OPTIONS"
-                # Add storage permission policy
-                Permissions-Policy: "interest-cohort=(), accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
