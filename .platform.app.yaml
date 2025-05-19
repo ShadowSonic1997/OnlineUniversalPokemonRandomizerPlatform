@@ -7,7 +7,7 @@ disk: 512
 web:
     locations:
         "/":
-            root: "/"
+            root: ""  # Changed from "/" to ""
             index:
                 - index.html
             expires: 1h
@@ -15,6 +15,5 @@ web:
             allow: true
             passthru: false
             headers:
-                # Important for web applications that use JavaScript modules
                 Cross-Origin-Opener-Policy: same-origin
                 Cross-Origin-Embedder-Policy: require-corp
