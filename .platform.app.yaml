@@ -4,6 +4,50 @@ type: python:3.9
 
 disk: 512
 
+hooks:
+    build: |
+        # Create a script to fix the missing IndexedDB object stores
+        cat > db-fix.js << 'EOL'
+        // Wait for DOM to be ready
+        document.addEventListener('DOMContentLoaded', function() {
+          // Initialize the IndexedDB with required object stores
+          function initDB() {
+            const request = indexedDB.deleteDatabase('cheerpjFS');
+            request.onsuccess = function() {
+              console.log("Database deleted successfully");
+              const openRequest = indexedDB.open('cheerpjFS', 1);
+              
+              openRequest.onupgradeneeded = function(event) {
+                const db = event.target.result;
+                
+                // Create object stores that CheerpJ needs
+                db.createObjectStore('files', { keyPath: 'path' });
+                db.createObjectStore('metadata', { keyPath: 'path' });
+                console.log('Created required object stores');
+              };
+              
+              openRequest.onsuccess = function() {
+                console.log('IndexedDB initialized successfully');
+              };
+              
+              openRequest.onerror = function(event) {
+                console.error('Error opening database:', event.target.error);
+              };
+            };
+            
+            request.onerror = function(event) {
+              console.error('Error deleting database:', event.target.error);
+            };
+          }
+          
+          // Initialize the database
+          initDB();
+        });
+        EOL
+        
+        # Inject our script at the beginning of the head
+        sed -i '/<head>/a <script src="db-fix.js"></script>' index.html
+
 web:
     locations:
         "/":
