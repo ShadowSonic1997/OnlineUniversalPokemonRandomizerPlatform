@@ -15,5 +15,6 @@ web:
             allow: true
             passthru: false
             headers:
-                Cross-Origin-Opener-Policy: same-origin
-                Cross-Origin-Embedder-Policy: credentialless
+                # Removed security headers that were causing iframe issues
+                Access-Control-Allow-Origin: "*"
+                Access-Control-Allow-Methods: "GET, POST, OPTIONS"
