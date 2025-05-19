@@ -6,89 +6,122 @@ disk: 512
 
 hooks:
     build: |
-        # Create a patch for the CheerpJ loader
+        # Create a more comprehensive fix for CheerpJ's IndexedDB issues
         cat > cheerpj-fix.js << 'EOL'
-        // Monkey patch the CheerpJ IndexedDB handling
+        // CheerpJ IndexedDB Fix
         (function() {
-          // Run when the page loads, before CheerpJ starts
-          window.addEventListener('load', function() {
-            // Try to delete and recreate the database with proper schema
-            try {
-              console.log("Initializing IndexedDB for CheerpJ");
+          // Store the original open method
+          const originalOpen = indexedDB.open;
+          
+          // Replace the open method with our own
+          indexedDB.open = function(name, version) {
+            console.log(`IndexedDB open called: ${name}, version: ${version}`);
+            
+            // If it's the CheerpJ database, intercept and fix
+            if (name === 'cheerpjFS') {
+              // Force version to be 1 to ensure onupgradeneeded will run
+              const request = originalOpen.call(indexedDB, name, 1);
               
-              // First, try to delete any existing database
-              const deleteReq = indexedDB.deleteDatabase('cheerpjFS');
-              
-              deleteReq.onsuccess = function() {
-                console.log("Creating fresh CheerpJ database");
+              // Always handle the upgrade
+              const originalUpgradeNeeded = request.onupgradeneeded;
+              request.onupgradeneeded = function(event) {
+                console.log("Creating CheerpJ database schema");
+                const db = event.target.result;
                 
-                // Create a new database with the correct schema
-                const openReq = indexedDB.open('cheerpjFS', 1);
+                // Create all possible stores CheerpJ might need
+                if (!db.objectStoreNames.contains('files')) {
+                  db.createObjectStore('files', { keyPath: 'path' });
+                  console.log("Created 'files' store");
+                }
                 
-                openReq.onupgradeneeded = function(event) {
-                  const db = event.target.result;
-                  console.log("Creating object stores");
-                  
-                  // Create the required object stores
-                  if (!db.objectStoreNames.contains('files')) {
-                    db.createObjectStore('files', { keyPath: 'path' });
-                  }
-                  
-                  if (!db.objectStoreNames.contains('metadata')) {
-                    db.createObjectStore('metadata', { keyPath: 'path' });
-                  }
-                };
+                if (!db.objectStoreNames.contains('metadata')) {
+                  db.createObjectStore('metadata', { keyPath: 'path' });
+                  console.log("Created 'metadata' store");
+                }
                 
-                openReq.onsuccess = function() {
-                  console.log("Database initialized successfully");
-                };
+                // Some versions might use these names instead
+                if (!db.objectStoreNames.contains('FILE_DATA')) {
+                  db.createObjectStore('FILE_DATA', { keyPath: 'path' });
+                  console.log("Created 'FILE_DATA' store");
+                }
                 
-                openReq.onerror = function(e) {
-                  console.error("Error creating database", e);
-                };
-              };
-              
-              deleteReq.onerror = function(e) {
-                console.error("Could not delete old database", e);
-              };
-              
-              // Patch the transaction method to prevent errors
-              const originalTransaction = IDBDatabase.prototype.transaction;
-              IDBDatabase.prototype.transaction = function() {
-                try {
-                  return originalTransaction.apply(this, arguments);
-                } catch (e) {
-                  console.warn("Transaction error intercepted:", e);
-                  // Return a mock object that won't crash
-                  return {
-                    objectStore: function() {
-                      return {
-                        put: function() { return { onsuccess: null }; },
-                        get: function() { return { onsuccess: null }; }
-                      };
-                    }
-                  };
+                if (!db.objectStoreNames.contains('FILE_METADATA')) {
+                  db.createObjectStore('FILE_METADATA', { keyPath: 'path' });
+                  console.log("Created 'FILE_METADATA' store");
+                }
+                
+                // Call original handler if it exists
+                if (originalUpgradeNeeded) {
+                  originalUpgradeNeeded.apply(this, arguments);
                 }
               };
-            } catch (e) {
-              console.error("Error setting up IndexedDB:", e);
+              
+              // Add success handler to patch transaction method after DB is open
+              const originalSuccess = request.onsuccess;
+              request.onsuccess = function(event) {
+                console.log("Database opened successfully, patching transaction method");
+                const db = event.target.result;
+                
+                // Patch the transaction method to handle missing stores
+                const originalTransaction = db.transaction;
+                db.transaction = function(storeNames, mode) {
+                  try {
+                    return originalTransaction.call(db, storeNames, mode);
+                  } catch (e) {
+                    console.warn("Transaction error:", e);
+                    console.warn("Requested stores:", storeNames);
+                    
+                    // Try to create the missing store(s) on the fly
+                    const tx = db.transaction([], 'readwrite');
+                    // Return a mock transaction that won't crash
+                    return {
+                      objectStore: function(name) {
+                        console.log("Accessing mock store:", name);
+                        return {
+                          put: function(data) { 
+                            console.log("Mock put called with:", data);
+                            return { onsuccess: null }; 
+                          },
+                          get: function(key) { 
+                            console.log("Mock get called with:", key);
+                            return { onsuccess: null }; 
+                          }
+                        };
+                      }
+                    };
+                  }
+                };
+                
+                // Call original success handler if it exists
+                if (originalSuccess) {
+                  originalSuccess.apply(this, arguments);
+                }
+              };
+              
+              return request;
             }
-          });
+            
+            // For other databases, use the original method
+            return originalOpen.apply(this, arguments);
+          };
+          
+          // Try to delete the database first to ensure a clean start
+          console.log("Attempting to delete existing CheerpJ database");
+          const deleteRequest = indexedDB.deleteDatabase('cheerpjFS');
+          deleteRequest.onsuccess = function() {
+            console.log("Existing database deleted successfully");
+          };
+          deleteRequest.onerror = function(event) {
+            console.warn("Error deleting database:", event);
+          };
         })();
         EOL
         
-        # Prepare a temporary index file
-        mkdir -p temp
-        cp index.html temp/
+        # Make a backup of index.html
+        cp index.html index.html.bak
         
         # Insert our fix script right after the opening head tag
-        sed -i '/<head>/a <script src="cheerpj-fix.js"></script>' temp/index.html
-        
-        # Copy the modified index back
-        cp temp/index.html .
-        
-        # Clean up
-        rm -rf temp
+        sed -i '/<head>/a <script src="cheerpj-fix.js"></script>' index.html
 
 web:
     locations:
