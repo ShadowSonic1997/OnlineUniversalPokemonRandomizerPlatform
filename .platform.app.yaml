@@ -7,7 +7,7 @@ disk: 512
 web:
     locations:
         "/":
-            root: "."
+            root: ""
             index:
                 - index.html
             expires: 1h
