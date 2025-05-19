@@ -1,0 +1,20 @@
+name: pokemon-randomizer
+
+type: nodejs:18
+
+disk: 512
+
+web:
+    locations:
+        "/":
+            root: "/"
+            index:
+                - index.html
+            expires: 1h
+            scripts: false
+            allow: true
+            passthru: false
+            headers:
+                # Important for web applications that use JavaScript modules
+                Cross-Origin-Opener-Policy: same-origin
+                Cross-Origin-Embedder-Policy: require-corp
