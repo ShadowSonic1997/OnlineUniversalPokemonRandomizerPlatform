@@ -10,41 +10,101 @@ dependencies:
 
 hooks:
     build: |
-        # Create a minimal Flask server
+        # Create a Flask server with proper CORS settings
         cat > server.py << 'EOL'
-        from flask import Flask, send_from_directory
+        from flask import Flask, send_from_directory, Response
+        import os
 
         app = Flask(__name__)
 
         # Add security headers
         @app.after_request
         def add_security_headers(response):
+            # Required for SharedArrayBuffer and proper isolation
             response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
             response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
+            
+            # Basic CORS headers
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+            
+            return response
+
+        # Handle OPTIONS requests
+        @app.route('/', methods=['OPTIONS'])
+        @app.route('/<path:path>', methods=['OPTIONS'])
+        def options_handler(path=None):
+            response = Response()
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
             return response
 
         # Serve static files
         @app.route('/<path:path>')
         def serve_file(path):
-            return send_from_directory('.', path)
+            if os.path.exists(path):
+                return send_from_directory('.', path)
+            return 'File not found', 404
 
         # Serve index.html
         @app.route('/')
         def serve_index():
-            return send_from_directory('.', 'index.html')
-
-        if __name__ == '__main__':
-            app.run(host='0.0.0.0', port=8888)
-        EOL
-
-web:
-    upstream:
-        socket_family: tcp
-        protocol: http
-    commands:
-        start: python server.py
-    locations:
-        "/":
-            passthru: true
-            scripts: false
-            allow: true
+            try:
+                with open('index.html', 'r') as f:
+                    content = f.read()
+                    
+                # Add our IndexedDB fix script
+                fix_script = """
+                <script>
+                // Wait for the page to load
+                window.addEventListener('load', function() {
+                    try {
+                        console.log("Initializing CheerpJ database fix");
+                        
+                        // First create/open the cheerpjFS database
+                        var req = indexedDB.open('cheerpjFS', 1);
+                        req.onupgradeneeded = function(event) {
+                            var db = event.target.result;
+                            console.log("Creating stores in cheerpjFS");
+                            
+                            // Create all possible store names
+                            if (!db.objectStoreNames.contains('files')) {
+                                db.createObjectStore('files', { keyPath: 'path' });
+                            }
+                            if (!db.objectStoreNames.contains('metadata')) {
+                                db.createObjectStore('metadata', { keyPath: 'path' });
+                            }
+                        };
+                        
+                        // Then also create the cjFS_/files/ database
+                        var req2 = indexedDB.open('cjFS_/files/', 1);
+                        req2.onupgradeneeded = function(event) {
+                            var db = event.target.result;
+                            console.log("Creating stores in cjFS_/files/");
+                            
+                            if (!db.objectStoreNames.contains('files')) {
+                                db.createObjectStore('files', { keyPath: 'path' });
+                            }
+                            if (!db.objectStoreNames.contains('metadata')) {
+                                db.createObjectStore('metadata', { keyPath: 'path' });
+                            }
+                        };
+                    } catch (e) {
+                        console.error("Error setting up databases:", e);
+                    }
+                });
+                </script>
+                """
+                
+                # Insert our fix script right before the closing head tag
+                if '</head>' in content:
+                    content = content.replace('</head>', fix_script + '</head>')
+                else:
+                    # If there's no head tag, add it at the beginning of the body
+                    content = content.replace('<body>', '<body>' + fix_script)
+                
+                return Response(content, mimetype='text/html')
+            except Exception as e:
+                return f"Error serving index.html: {str
